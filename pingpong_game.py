@@ -1,4 +1,3 @@
-# pingpong_game.py
 import pygame
 import random
 import sys
@@ -8,23 +7,24 @@ from pathlib import Path
 SCREEN_WIDTH = 960
 SCREEN_HEIGHT = 720
 
-# Table / visual colors
-COLOR_TABLE_TOP = (11, 94, 43)
-COLOR_TABLE_BOTTOM = (6, 64, 32)
-COLOR_BORDER = (4, 46, 22)
-COLOR_WHITE = (245, 245, 245)
-COLOR_NET = (240, 240, 240)
-COLOR_SHADOW = (0, 0, 0, 120)
+COLOR_TABLE_TOP    = (40, 90, 170)    # bright icy blue
+COLOR_TABLE_BOTTOM = (10, 40, 90)     # deep cold blue
+COLOR_BORDER       = (5, 20, 50)      # dark navy frame
+COLOR_WHITE        = (230, 240, 255)  # icy white for ball/paddles
+COLOR_NET          = (210, 230, 255)  # light ice white (net)
+COLOR_SHADOW       = (0, 20, 80, 120) # cold blue-transparent shadow
 
 # UI colors
 COLOR_BLACK = (0, 0, 0)
 COLOR_GRAY = (255, 255, 255)
 COLOR_RED = (220, 60, 60)
 COLOR_GREEN = (80, 200, 120)
+COLOR_BUTTON = (30, 120, 70)
+COLOR_BUTTON_HOVER = (50, 150, 90)
 
 # Gameplay settings
 PADDLE_W, PADDLE_H = 12, 110
-BALL_SIZE = 12
+BALL_SIZE = 20
 PADDLE_SPEED = 0.6           # pixels per ms (player)
 AI_MAX_SPEED = 0.45          # max speed of AI paddle (pixels per ms)
 BALL_BASE_SPEED = 0.35       # base speed factor (pixels per ms)
@@ -71,7 +71,6 @@ def draw_table(surface):
 
     # thin inner border
     inner_border_color = (255, 255, 255, 30)
-    # draw with alpha using temporary surface
     tmp = pygame.Surface((inner_rect.width, inner_rect.height), pygame.SRCALPHA)
     pygame.draw.rect(tmp, inner_border_color, tmp.get_rect(), 2, border_radius=12)
     surface.blit(tmp, inner_rect.topleft)
@@ -93,16 +92,12 @@ def draw_table(surface):
 
 def draw_paddle(surface, rect):
     """Draws a rounded paddle with end-caps and light inner shadow."""
-    # paddle body
     pygame.draw.rect(surface, COLOR_WHITE, rect, border_radius=8)
-    # endcaps - circles to make rounded ends
     cap_r = max(6, rect.width // 2 + 2)
     left_center = (rect.left + cap_r // 2, rect.centery)
     right_center = (rect.right - cap_r // 2, rect.centery)
     pygame.draw.circle(surface, COLOR_WHITE, left_center, cap_r)
     pygame.draw.circle(surface, COLOR_WHITE, right_center, cap_r)
-
-    # inner shadow for bevel
     inner = rect.inflate(-4, -8)
     if inner.width > 0 and inner.height > 0:
         s = pygame.Surface((inner.width, inner.height), pygame.SRCALPHA)
@@ -111,30 +106,34 @@ def draw_paddle(surface, rect):
 
 def draw_ball(surface, rect):
     """Draw ball with shadow, glow and highlight to look real."""
-    # shadow below the ball
     shadow_surf = pygame.Surface((rect.width * 3, rect.height * 2), pygame.SRCALPHA)
     pygame.draw.ellipse(shadow_surf, (0, 0, 0, 90), shadow_surf.get_rect())
     surface.blit(shadow_surf, (rect.left - rect.width // 1.5, rect.top + rect.height // 1.5))
 
-    # glow
     glow_surf = pygame.Surface((rect.width * 4, rect.height * 4), pygame.SRCALPHA)
     pygame.draw.ellipse(glow_surf, (255, 255, 255, 24), glow_surf.get_rect())
     surface.blit(glow_surf, (rect.left - rect.width * 1.5, rect.top - rect.height * 1.5))
 
-    # ball body
     pygame.draw.ellipse(surface, COLOR_WHITE, rect)
-
-    # highlight
     hl_w, hl_h = max(2, rect.width // 2), max(2, rect.height // 2)
     highlight = pygame.Surface((hl_w, hl_h), pygame.SRCALPHA)
     pygame.draw.ellipse(highlight, (255, 255, 255, 180), highlight.get_rect())
     surface.blit(highlight, (rect.left + rect.width * 0.12, rect.top + rect.height * 0.08))
 
+def draw_button(surface, rect, text, font, mouse_pos):
+    """Draw a rounded button, return True if mouse is hovering (for click handling externally)."""
+    hover = rect.collidepoint(mouse_pos)
+    color = COLOR_BUTTON_HOVER if hover else COLOR_BUTTON
+    pygame.draw.rect(surface, color, rect, border_radius=12)
+    pygame.draw.rect(surface, (255,255,255,20), rect, 2, border_radius=12)  # subtle border
+    txt = font.render(text, True, COLOR_WHITE)
+    surface.blit(txt, txt.get_rect(center=rect.center))
+    return hover
+
 # ---------- End visuals ----------
 
 def main():
     pygame.init()
-    # Optional mixer init for sounds (ignore if fails)
     try:
         pygame.mixer.init()
     except Exception:
@@ -146,6 +145,7 @@ def main():
     clock = pygame.time.Clock()
     font = pygame.font.SysFont('Consolas', 32)
     small_font = pygame.font.SysFont('Consolas', 18)
+    button_font = pygame.font.SysFont('Consolas', 28)
 
     # paddles and ball (initial positions)
     paddle_1_rect = pygame.Rect(30, (SCREEN_HEIGHT - PADDLE_H) // 2, PADDLE_W, PADDLE_H)
@@ -188,8 +188,13 @@ def main():
 
     show_debug = False
 
+    # game over state
+    game_over = False
+    winner_name = None
+
     while True:
         now = pygame.time.get_ticks()
+        mouse_pos = pygame.mouse.get_pos()
 
         # update power readiness from cooldowns
         if (not power_ready_left) and now >= power_cooldown_end_left:
@@ -205,6 +210,9 @@ def main():
         if power_active_right and now >= power_active_end_right:
             power_active_right = False
 
+        clicked = False
+        click_pos = None
+
         # handle events
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -212,9 +220,12 @@ def main():
                 sys.exit()
 
             if event.type == pygame.VIDEORESIZE:
-                # handle window resize: update screen surface (keeps windowed/resizable)
                 if not fullscreen:
                     screen = pygame.display.set_mode((event.w, event.h), pygame.RESIZABLE)
+
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                clicked = True
+                click_pos = event.pos
 
             if event.type == pygame.KEYDOWN:
                 # movement keys
@@ -230,7 +241,7 @@ def main():
 
                 # start / pause / toggles
                 if event.key == pygame.K_SPACE:
-                    if not started:
+                    if not started and not game_over:
                         started = True
                     elif paused:
                         paused = False
@@ -255,24 +266,24 @@ def main():
                     ball_dir = {'x': ball_speed * random.choice((1, -1)), 'y': 0}
                     ball_rect.center = (screen.get_width() // 2, screen.get_height() // 2)
                     started = False
+                    game_over = False
+                    winner_name = None
 
                 # debug toggle
                 if event.key == pygame.K_d:
                     show_debug = not show_debug
 
                 # POWER-SHOT KEYS:
-                # Left player uses 'E'
                 if event.key == pygame.K_e:
-                    if power_ready_left:
+                    if power_ready_left and not game_over:
                         power_active_left = True
                         power_ready_left = False
                         power_active_end_left = now + POWER_WINDOW_MS
                         power_cooldown_end_left = now + POWER_COOLDOWN_MS
                         if power_sound:
                             power_sound.play()
-                # Right player uses 'K'
                 if event.key == pygame.K_k:
-                    if power_ready_right:
+                    if power_ready_right and not game_over:
                         power_active_right = True
                         power_ready_right = False
                         power_active_end_right = now + POWER_WINDOW_MS
@@ -293,15 +304,60 @@ def main():
         # draw table visuals into screen
         draw_table(screen)
 
-        # center dashed line already drawn by draw_table
-
-        # Start screen if not started
-        if not started:
-            text = font.render('Press SPACE to Start    (TAB toggle AI)    P = Pause    F = Fullscreen', True, COLOR_WHITE)
-            rect = text.get_rect(center=(sw // 2, sh // 2))
-            screen.blit(text, rect)
+        # Start screen if not started and not game_over
+        if not started and not game_over:
+            # Draw instructions and a Start button
+            title = font.render('PONG', True, COLOR_WHITE)
+            screen.blit(title, title.get_rect(center=(sw // 2, sh // 2 - 120)))
             hint = small_font.render('W/S for left; Up/Down for right (when AI off). E = Power (left)  K = Power (right). R reset.', True, COLOR_GRAY)
             screen.blit(hint, (10, sh - 30))
+            instr = small_font.render('Press SPACE or click START. TAB toggles AI. P = Pause. F = Fullscreen', True, COLOR_GRAY)
+            screen.blit(instr, instr.get_rect(center=(sw // 2, sh // 2 - 80)))
+
+            # start button dimensions
+            btn_w, btn_h = 220, 60
+            btn_rect = pygame.Rect(0, 0, btn_w, btn_h)
+            btn_rect.center = (sw // 2, sh // 2)
+            hovered = draw_button(screen, btn_rect, "START", button_font, mouse_pos)
+
+            # handle click on start button
+            if clicked and click_pos and btn_rect.collidepoint(click_pos):
+                started = True
+
+            pygame.display.flip()
+            clock.tick(60)
+            continue
+
+        # If game over, show winner + restart button
+        if game_over:
+            # overlay dim
+            overlay = pygame.Surface((sw, sh), pygame.SRCALPHA)
+            overlay.fill((0, 0, 0, 160))
+            screen.blit(overlay, (0, 0))
+
+            win_text = font.render(f"{winner_name} Wins!", True, COLOR_WHITE)
+            screen.blit(win_text, win_text.get_rect(center=(sw // 2, sh // 2 - 60)))
+
+            sub = small_font.render("Click RESTART or press R to play again", True, COLOR_GRAY)
+            screen.blit(sub, sub.get_rect(center=(sw // 2, sh // 2 - 20)))
+
+            # restart button
+            btn_w, btn_h = 260, 64
+            btn_rect = pygame.Rect(0, 0, btn_w, btn_h)
+            btn_rect.center = (sw // 2, sh // 2 + 60)
+            hovered = draw_button(screen, btn_rect, "RESTART", button_font, mouse_pos)
+
+            if clicked and click_pos and btn_rect.collidepoint(click_pos):
+                # reset everything
+                score_left = 0
+                score_right = 0
+                ball_speed = BALL_BASE_SPEED
+                ball_dir = {'x': ball_speed * random.choice((1, -1)), 'y': 0}
+                ball_rect.center = (sw // 2, sh // 2)
+                started = False
+                game_over = False
+                winner_name = None
+
             pygame.display.flip()
             clock.tick(60)
             continue
@@ -358,7 +414,7 @@ def main():
             ball_speed = BALL_BASE_SPEED
             ball_dir = {'x': ball_speed * 1, 'y': random.uniform(-0.3, 0.3)}
             ball_rect.center = (sw // 2, sh // 2)
-            started = False  # wait for space to serve
+            started = False  # wait for space or click to serve
             pygame.time.delay(250)
 
         if ball_rect.right >= sw:
@@ -373,14 +429,11 @@ def main():
 
         # paddle collisions (left)
         if paddle_1_rect.colliderect(ball_rect) and ball_dir['x'] < 0:
-            # check if left power was active for this hit
             if power_active_left:
-                # apply stronger reflection and award bonus point
                 ball_dir['x'] *= -1 * POWER_MULTIPLIER
                 ball_dir['y'] *= POWER_MULTIPLIER
-                # award immediate point for successful power-hit
                 score_left += POWER_BONUS_POINTS
-                power_active_left = False  # consume the power
+                power_active_left = False
             else:
                 ball_dir['x'] *= -1
                 rel = (ball_rect.centery - paddle_1_rect.centery) / (PADDLE_H / 2)
@@ -418,7 +471,6 @@ def main():
         screen.blit(score_text, score_text.get_rect(center=(sw // 2, 40)))
 
         # draw power UI (left and right)
-        # Left: E key
         left_power_label = small_font.render("Left Power (E):", True, COLOR_WHITE)
         screen.blit(left_power_label, (10, 60))
         if power_ready_left and not power_active_left:
@@ -428,12 +480,10 @@ def main():
             status = small_font.render("POWER ACTIVE!", True, COLOR_RED)
             screen.blit(status, (160, 60))
         else:
-            # cooldown remaining:
             rem = max(0, (power_cooldown_end_left - now) / 1000.0)
             status = small_font.render(f"CD: {rem:.1f}s", True, COLOR_GRAY)
             screen.blit(status, (160, 60))
 
-        # Right: K key
         right_power_label = small_font.render("Right Power (K):", True, COLOR_WHITE)
         screen.blit(right_power_label, (sw - 260, 60))
         if power_ready_right and not power_active_right:
@@ -458,12 +508,15 @@ def main():
 
         # check for win
         if score_left >= max_score or score_right >= max_score:
-            winner = "Left" if score_left > score_right else "Right"
-            win_text = font.render(f"{winner} Player Wins!  (R to restart)", True, COLOR_WHITE)
-            screen.blit(win_text, win_text.get_rect(center=(sw // 2, sh // 2)))
-            pygame.display.flip()
+            # name mapping for clarity
+            if score_left > score_right:
+                winner_name = "Player 1"
+            else:
+                winner_name = "Player 2"
+            game_over = True
             started = False
-            clock.tick(60)
+            # display the win message for the next frame via the game_over branch
+            pygame.display.flip()
             continue
 
         pygame.display.flip()
