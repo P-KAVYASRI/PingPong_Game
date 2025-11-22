@@ -8,16 +8,23 @@ from pathlib import Path
 SCREEN_WIDTH = 960
 SCREEN_HEIGHT = 720
 
-# Colors
+# Table / visual colors
+COLOR_TABLE_TOP = (11, 94, 43)
+COLOR_TABLE_BOTTOM = (6, 64, 32)
+COLOR_BORDER = (4, 46, 22)
+COLOR_WHITE = (245, 245, 245)
+COLOR_NET = (240, 240, 240)
+COLOR_SHADOW = (0, 0, 0, 120)
+
+# UI colors
 COLOR_BLACK = (0, 0, 0)
-COLOR_WHITE = (255, 255, 255)
 COLOR_GRAY = (90, 90, 90)
 COLOR_RED = (220, 60, 60)
 COLOR_GREEN = (80, 200, 120)
 
 # Gameplay settings
-PADDLE_W, PADDLE_H = 10, 110
-BALL_SIZE = 20
+PADDLE_W, PADDLE_H = 12, 110
+BALL_SIZE = 12
 PADDLE_SPEED = 0.6           # pixels per ms (player)
 AI_MAX_SPEED = 0.45          # max speed of AI paddle (pixels per ms)
 BALL_BASE_SPEED = 0.35       # base speed factor (pixels per ms)
@@ -43,6 +50,88 @@ def load_sound(name):
             return None
     return None
 
+# ---------- Visual helper functions ----------
+def draw_table(surface):
+    """Draws the green table with border, gradient, center dashed line and gloss."""
+    w, h = surface.get_size()
+
+    # border
+    pygame.draw.rect(surface, COLOR_BORDER, (0, 0, w, h), border_radius=18)
+
+    # gradient cloth area (we draw lines to create vertical gradient)
+    inner_rect = pygame.Rect(12, 12, w - 24, h - 24)
+    grad = pygame.Surface((inner_rect.width, inner_rect.height))
+    for y in range(inner_rect.height):
+        t = y / inner_rect.height
+        r = int(COLOR_TABLE_TOP[0] * (1 - t) + COLOR_TABLE_BOTTOM[0] * t)
+        g = int(COLOR_TABLE_TOP[1] * (1 - t) + COLOR_TABLE_BOTTOM[1] * t)
+        b = int(COLOR_TABLE_TOP[2] * (1 - t) + COLOR_TABLE_BOTTOM[2] * t)
+        pygame.draw.line(grad, (r, g, b), (0, y), (inner_rect.width, y))
+    surface.blit(grad, inner_rect.topleft)
+
+    # thin inner border
+    inner_border_color = (255, 255, 255, 30)
+    # draw with alpha using temporary surface
+    tmp = pygame.Surface((inner_rect.width, inner_rect.height), pygame.SRCALPHA)
+    pygame.draw.rect(tmp, inner_border_color, tmp.get_rect(), 2, border_radius=12)
+    surface.blit(tmp, inner_rect.topleft)
+
+    # center dashed line
+    cx = w // 2
+    y = 30
+    dash_h = 14
+    gap = 12
+    line_color = (255, 255, 255, 170)
+    while y < h - 30:
+        pygame.draw.rect(surface, line_color, (cx - 2, y, 4, dash_h))
+        y += dash_h + gap
+
+    # subtle gloss
+    gloss = pygame.Surface((inner_rect.width, 40), pygame.SRCALPHA)
+    gloss.fill((255, 255, 255, 12))
+    surface.blit(gloss, (inner_rect.left, inner_rect.top))
+
+def draw_paddle(surface, rect):
+    """Draws a rounded paddle with end-caps and light inner shadow."""
+    # paddle body
+    pygame.draw.rect(surface, COLOR_WHITE, rect, border_radius=8)
+    # endcaps - circles to make rounded ends
+    cap_r = max(6, rect.width // 2 + 2)
+    left_center = (rect.left + cap_r // 2, rect.centery)
+    right_center = (rect.right - cap_r // 2, rect.centery)
+    pygame.draw.circle(surface, COLOR_WHITE, left_center, cap_r)
+    pygame.draw.circle(surface, COLOR_WHITE, right_center, cap_r)
+
+    # inner shadow for bevel
+    inner = rect.inflate(-4, -8)
+    if inner.width > 0 and inner.height > 0:
+        s = pygame.Surface((inner.width, inner.height), pygame.SRCALPHA)
+        pygame.draw.rect(s, (0, 0, 0, 18), s.get_rect(), border_radius=6)
+        surface.blit(s, inner.topleft)
+
+def draw_ball(surface, rect):
+    """Draw ball with shadow, glow and highlight to look real."""
+    # shadow below the ball
+    shadow_surf = pygame.Surface((rect.width * 3, rect.height * 2), pygame.SRCALPHA)
+    pygame.draw.ellipse(shadow_surf, (0, 0, 0, 90), shadow_surf.get_rect())
+    surface.blit(shadow_surf, (rect.left - rect.width // 1.5, rect.top + rect.height // 1.5))
+
+    # glow
+    glow_surf = pygame.Surface((rect.width * 4, rect.height * 4), pygame.SRCALPHA)
+    pygame.draw.ellipse(glow_surf, (255, 255, 255, 24), glow_surf.get_rect())
+    surface.blit(glow_surf, (rect.left - rect.width * 1.5, rect.top - rect.height * 1.5))
+
+    # ball body
+    pygame.draw.ellipse(surface, COLOR_WHITE, rect)
+
+    # highlight
+    hl_w, hl_h = max(2, rect.width // 2), max(2, rect.height // 2)
+    highlight = pygame.Surface((hl_w, hl_h), pygame.SRCALPHA)
+    pygame.draw.ellipse(highlight, (255, 255, 255, 180), highlight.get_rect())
+    surface.blit(highlight, (rect.left + rect.width * 0.12, rect.top + rect.height * 0.08))
+
+# ---------- End visuals ----------
+
 def main():
     pygame.init()
     # Optional mixer init for sounds (ignore if fails)
@@ -53,7 +142,7 @@ def main():
 
     pygame.display.set_allow_screensaver(False)
     screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.RESIZABLE)
-    pygame.display.set_caption('Pong - Power Shot (E/K)')
+    pygame.display.set_caption('Pong - Power Shot (E/K) — Visual Table')
     clock = pygame.time.Clock()
     font = pygame.font.SysFont('Consolas', 32)
     small_font = pygame.font.SysFont('Consolas', 18)
@@ -197,18 +286,14 @@ def main():
                 if event.key in (pygame.K_UP, pygame.K_DOWN):
                     paddle_2_move = 0.0
 
-        # Draw background & UI
-        screen.fill(COLOR_BLACK)
+        # Draw background & UI (use visual table)
+        screen.fill(COLOR_BORDER)  # fallback border color
         sw, sh = screen.get_size()
 
-        # center dashed line
-        dash_h = 15
-        gap = 10
-        x_center = sw // 2
-        y = 0
-        while y < sh:
-            pygame.draw.rect(screen, COLOR_GRAY, (x_center - 2, y, 4, dash_h))
-            y += dash_h + gap
+        # draw table visuals into screen
+        draw_table(screen)
+
+        # center dashed line already drawn by draw_table
 
         # Start screen if not started
         if not started:
@@ -230,7 +315,7 @@ def main():
             pygame.display.flip()
             continue
 
-        # move paddles
+        # move paddles (scaled by dt)
         paddle_1_rect.top += paddle_1_move * dt
         paddle_2_rect.top += paddle_2_move * dt
 
@@ -242,27 +327,27 @@ def main():
                 move_amount = min(AI_MAX_SPEED * dt, abs(diff))
                 paddle_2_rect.top += direction * move_amount
 
-        # clamp paddles (adapt to current window height)
-        if paddle_1_rect.top < 0:
-            paddle_1_rect.top = 0
-        if paddle_1_rect.bottom > sh:
-            paddle_1_rect.bottom = sh
+        # clamp paddles to current screen height
+        if paddle_1_rect.top < 12:
+            paddle_1_rect.top = 12
+        if paddle_1_rect.bottom > sh - 12:
+            paddle_1_rect.bottom = sh - 12
 
-        if paddle_2_rect.top < 0:
-            paddle_2_rect.top = 0
-        if paddle_2_rect.bottom > sh:
-            paddle_2_rect.bottom = sh
+        if paddle_2_rect.top < 12:
+            paddle_2_rect.top = 12
+        if paddle_2_rect.bottom > sh - 12:
+            paddle_2_rect.bottom = sh - 12
 
         # update ball position
         ball_rect.left += ball_dir['x'] * dt
         ball_rect.top += ball_dir['y'] * dt
 
-        # top/bottom collision
-        if ball_rect.top <= 0:
-            ball_rect.top = 0
+        # top/bottom collision (respect 12px inner margin)
+        if ball_rect.top <= 12:
+            ball_rect.top = 12
             ball_dir['y'] *= -1
-        if ball_rect.bottom >= sh:
-            ball_rect.bottom = sh
+        if ball_rect.bottom >= sh - 12:
+            ball_rect.bottom = sh - 12
             ball_dir['y'] *= -1
 
         # left/right out of bounds -> point scored
@@ -323,10 +408,10 @@ def main():
                 hit_sound.play()
             ball_rect.right = paddle_2_rect.left - 1
 
-        # draw paddles and ball
-        pygame.draw.rect(screen, COLOR_WHITE, paddle_1_rect)
-        pygame.draw.rect(screen, COLOR_WHITE, paddle_2_rect)
-        pygame.draw.ellipse(screen, COLOR_WHITE, ball_rect)
+        # draw paddles and ball (visual functions)
+        draw_paddle(screen, paddle_1_rect)
+        draw_paddle(screen, paddle_2_rect)
+        draw_ball(screen, ball_rect)
 
         # draw score
         score_text = font.render(f"{score_left}   -   {score_right}", True, COLOR_WHITE)
